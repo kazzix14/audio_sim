@@ -5,6 +5,7 @@ name = "audio_sim"
 version = "0.1.0"
 dependencies = [
  "gnuplot 0.0.31 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hound 3.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -12,5 +13,11 @@ name = "gnuplot"
 version = "0.0.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
+[[package]]
+name = "hound"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
 [metadata]
 "checksum gnuplot 0.0.31 (registry+https://github.com/rust-lang/crates.io-index)" = "18a907dc810202b800898a3059eba489404c7f232f8e141500122a86b173bd7f"
+"checksum hound 3.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "8a164bb2ceaeff4f42542bdb847c41517c78a60f5649671b2a07312b6e117549"

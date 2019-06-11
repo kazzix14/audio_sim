@@ -44,7 +44,7 @@ impl WaveSimulator
                         const dt : f32 = 1.0/60.0;
                         const c : f32 = 1.0;
                         const coefficient :f32 = (dt*dt) * (c*c) / (dx*dx);
-                        const k : f32 = 0.5;
+                        const k : f32 = 0.2;
 
                         while let Ok((i, tx)) = rx.recv()
                         {
