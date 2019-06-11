@@ -1,0 +1,128 @@
+use std::fs::*;
+use std::io::prelude::*;
+
+fn main() -> std::io::Result<()>
+{
+    let mut space = Box::new(Space::new().with_gauss());
+
+    create_dir("result");
+
+    for t in 0..TIMES_UPDATE
+    {
+        let mut file = File::create(format!("result/{}", t))?;
+        for z in 0..SPACE_DEPTH
+        {
+            for y in 0..SPACE_HEIGHT
+            {
+                for x in 0..SPACE_WIDTH
+                {
+                    file.write_fmt(format_args!("{} {} {} {}\n", x, y, z, space.value_current[x + y*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT]))?;
+                }
+            }
+        }
+       space.next();
+    }
+
+    Ok(())
+}
+
+const SPACE_HEIGHT: usize = 50;
+const SPACE_WIDTH: usize = 50;
+const SPACE_DEPTH: usize = 50;
+
+const DELTA_TIME: f32 = 1.0/30.0;
+const TIMES_UPDATE: u32 = 900;
+
+#[derive(Clone)]
+struct Space
+{
+    value_previous: Vec<f32>,
+    value_current: Vec<f32>,
+    value_next: Vec<f32>,
+}
+
+impl Space
+{
+    pub fn new() -> Space
+    {
+        Space{
+            value_previous: vec![0.0; SPACE_HEIGHT * SPACE_WIDTH * SPACE_DEPTH],
+            value_current: vec![0.0; SPACE_HEIGHT * SPACE_WIDTH * SPACE_DEPTH],
+            value_next: vec![0.0; SPACE_HEIGHT * SPACE_WIDTH * SPACE_DEPTH],
+        }
+    }
+
+    pub fn with_gauss(&mut self) -> Space
+    {
+        fn gauss(x: f32, sigma: f32) -> f32
+        {
+            1.0 / (2.0*std::f32::consts::PI).sqrt() * sigma * (-(x.powi(2) / (2.0 * sigma.powi(2)))).exp()
+        }
+
+        let cx1 = SPACE_WIDTH as f32 / 3.0;
+        let cy1 = SPACE_HEIGHT as f32 / 3.0;
+        let cz1 = SPACE_DEPTH as f32 / 3.0;
+
+        let cx2 = SPACE_WIDTH as f32 * 2.0 / 3.0;
+        let cy2 = SPACE_HEIGHT as f32 * 2.0 / 3.0;
+    
+        for z in 0..SPACE_DEPTH
+        {
+            for y in 0..SPACE_HEIGHT
+            {
+                for x in 0..SPACE_WIDTH
+                {
+                    let mut value = 0.0;
+
+                    let norm = ((cx1 - x as f32).powi(2) + (cy1 - y as f32).powi(2) + (cz1 - z as f32).powi(2)).sqrt();
+                    value += gauss(norm, 5.0) * 10.0;
+
+                    //let norm = ((cx2 - x as f32).powi(2) + (cy2 - y as f32).powi(2)).sqrt();
+                    //value += gauss(norm, 3.0) * 20.0;
+
+                    self.value_next[x + y*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT] = value;
+                }
+            }
+        }
+
+        self.value_current  = self.value_next.clone();
+        self.value_previous = self.value_current.clone();
+
+
+        self.clone()
+    }
+
+    pub fn next(&mut self)
+    {
+        let dx : f32 = 60.0 / SPACE_HEIGHT as f32;
+        let dt : f32 = DELTA_TIME;
+        let c : f32 = 2.0;
+
+        let coefficient = dt.powi(2) * c.powi(2) / dx.powi(2);
+
+        for z in 1..SPACE_DEPTH-1
+        {
+            for y in 1..SPACE_HEIGHT-1
+            {
+                for x in 1..SPACE_WIDTH-1
+                {
+                    let value_previous = self.value_previous[x + y*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT];
+                    let value_current = self.value_current[x + y*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT];
+
+                    let value_left   = self.value_current[x-1 + y*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT];
+                    let value_right  = self.value_current[x+1 + y*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT];
+                    let value_top    = self.value_current[x + (y-1)*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT];
+                    let value_bottom = self.value_current[x + (y+1)*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT];
+                    let value_front  = self.value_current[x + y*SPACE_WIDTH + (z-1)*SPACE_WIDTH*SPACE_HEIGHT];
+                    let value_back   = self.value_current[x + y*SPACE_WIDTH + (z+1)*SPACE_WIDTH*SPACE_HEIGHT];
+
+                    self.value_next[x + y*SPACE_WIDTH + z*SPACE_WIDTH*SPACE_HEIGHT] = 2.0*value_current - value_previous + coefficient*(-6.0 * value_current + value_left + value_right + value_top + value_bottom + value_front + value_back);
+                }
+            }
+        }
+
+        self.value_previous = self.value_current.clone();
+        self.value_current = self.value_next.clone();
+
+    }
+}

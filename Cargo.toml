@@ -1,0 +1,10 @@
+[package]
+name = "audio_sim"
+version = "0.1.0"
+authors = ["kazuma"]
+edition = "2018"
+
+[dependencies]
+gnuplot = "0.0.31"
+
+[dev-dependencies]
