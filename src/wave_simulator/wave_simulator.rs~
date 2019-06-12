@@ -1,10 +1,10 @@
+use crate::NUM_THREADS;
+
 use std::thread;
 use std::sync::*;
 use std::fmt::*;
 
 use super::Space;
-
-const NUM_THREADS: usize = 6;
 
 #[derive(Clone)]
 pub struct WaveSimulator
@@ -44,13 +44,13 @@ impl WaveSimulator
                         const dt : f32 = 1.0/60.0;
                         const c : f32 = 1.0;
                         const coefficient :f32 = (dt*dt) * (c*c) / (dx*dx);
-                        const k : f32 = 0.5;
+                        const k : f32 = 0.05;
 
                         while let Ok((i, tx)) = rx.recv()
                         {
 
-                            let mut y_start = i*len_per_thread*size - size;
-                            let mut y_end = (i+1)*len_per_thread*size + size;
+                            let mut y_start = i*len_per_thread*size;
+                            let mut y_end = (i+1)*len_per_thread*size;
 
                             let limit = NUM_THREADS-1;
                             
@@ -63,6 +63,8 @@ impl WaveSimulator
                             {
                                 y_end -= size
                             }
+                            y_start -= size;
+                            y_end += size;
 
                             let mut my_current;
                             
