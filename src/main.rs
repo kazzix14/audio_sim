@@ -1,115 +1,370 @@
+use audio_sim::wave_simulator;
 use audio_sim::wave_simulator::*;
 use audio_sim::SIZE;
 use audio_sim::SLEEP_TIME;
 
-use std::thread;
-use std::sync::*;
 use std::sync::mpsc::*;
+use std::sync::*;
+use std::thread;
 use std::time::Instant;
 
 use hound;
 
-fn main() -> std::io::Result<()>
-{
+fn main() -> std::io::Result<()> {
     let mut wave_simulator = WaveSimulator::new(SIZE).unwrap();
-    wave_simulator.add_gauss(20.0, 25.0, 1.0, 10.0);
+    wave_simulator.add_gauss(50.0, 50.0, 1.0, 1.0);
 
-    
-    let mem_gui = Arc::new(Mutex::new(Vec::new()));
+    let mem_gui = Arc::new(Mutex::new(vec![0.0; SIZE * SIZE]));
     let mem_copy = Arc::clone(&mem_gui);
 
     let (tx, rx) = mpsc::channel();
 
-    thread::spawn(move ||{gui(mem_copy, tx);});
+    thread::spawn(move || {
+        gui(mem_copy, tx);
+    });
 
-    //let mut writer = get_writer();
+    let mut writer = get_writer();
 
-    for (t, space) in wave_simulator.enumerate()
-    {
+    let mut now = Instant::now();
+    let mut mic_l_pos = (0, 0);
+    let mut mic_r_pos = (0, 0);
+    let tx_order_vec = wave_simulator.tx_order.clone();
+    for (t, space) in wave_simulator.enumerate() {
         let mut order = None;
-        if let Ok(o) = rx.try_recv()
-        {
-            match o
-            {
-                Order::Drop(x, y, f) => {order = Some(Order::Drop(x, y, f))},
+        if let Ok(o) = rx.try_recv() {
+            match o {
+                Order::Drop(x, y, f) => order = Some(Order::Drop(x, y, f)),
+                Order::MoveMic(mic, pos) => match mic {
+                    Mic::Left => mic_l_pos = pos,
+                    Mic::Right => mic_r_pos = pos,
+                },
+                Order::WaveSim(ws_order) => match ws_order {
+                    wave_simulator::Order::Change(Parameter::PropagationRatio(x, y, value)) => {
+                        order = Some(o.clone())
+                    }
+                    wave_simulator::Order::Change(Parameter::DumpingRatio(x, y, value)) => {
+                        order = Some(o.clone())
+                    }
+                    _ => tx_order_vec.iter().for_each(|tx| {
+                        tx.send(ws_order.clone()).unwrap();
+                    }),
+                },
                 Order::Quit => break,
-                _ => {},
+                _ => {}
             }
         }
-        
-        let now = Instant::now();
+
         let mut sp;
         {
             let mut s = space.lock().unwrap();
             sp = s.clone();
-            if let Some(Order::Drop(x, y, f)) = order
-            {
-                s.space[x + y*SIZE] += f;
+
+            if let Some(o) = order {
+                match o {
+                    Order::Drop(x, y, f) => {
+                        s.space[x + y * SIZE] += f;
+                    }
+                    Order::WaveSim(ws_order) => match ws_order {
+                        wave_simulator::Order::Change(Parameter::PropagationRatio(x, y, value)) => {
+                            s.space_spec[x + y * SIZE].0 = value;
+                        }
+                        wave_simulator::Order::Change(Parameter::DumpingRatio(x, y, value)) => {
+                            s.space_spec[x + y * SIZE].1 = value;
+                        }
+                    },
+                    _ => (),
+                }
             }
         }
-            //let amplitude = i16::MAX as f32 / 2  as f32 * (t as f32/44100 as f32);
-            //writer.write_sample((s.space[(SIZE-1)*SIZE + SIZE-20] * amplitude) as i16).unwrap();
 
-        {
-            let mut m = mem_gui.lock().unwrap();
-            *m = sp.space;
+        let amplitude = std::i16::MAX as f32 / 10.0;
+        writer
+            .write_sample(
+                (sp.space[mic_l_pos.0 as usize + mic_l_pos.1 as usize * SIZE] * amplitude) as i16,
+            )
+            .unwrap();
+        writer
+            .write_sample(
+                (sp.space[mic_r_pos.0 as usize + mic_r_pos.1 as usize * SIZE] * amplitude) as i16,
+            )
+            .unwrap();
+
+        if now.elapsed().as_millis() > 10 {
+            let mem_throw = sp
+                .space
+                .as_slice()
+                .iter()
+                .enumerate()
+                .map(|(i, v)| v / 20.0 + (1.0 - sp.space_spec[i].0) + sp.space_spec[i].1 / 2.0)
+                .collect::<Vec<f32>>();
+            {
+                let mut m = mem_gui.lock().unwrap();
+                *m = mem_throw;
+                m[mic_l_pos.0 as usize + mic_l_pos.1 as usize * SIZE] = 100.0;
+                m[mic_r_pos.0 as usize + mic_r_pos.1 as usize * SIZE] = 100.0;
+            }
+            now = Instant::now();
         }
 
         //println!("{} ms", now.elapsed().as_millis());
 
-       /*
-        if t > 44100
-        {
-            break;
+        // every 100 ms
+        if t % 4410 == 0 {
+            println!("{} s", t as f32 / 44100.0);
         }
-        */
 
-        thread::sleep_ms(SLEEP_TIME);
-        
+        thread::sleep(std::time::Duration::from_millis(SLEEP_TIME));
     }
 
     Ok(())
 }
 
-enum Order
-{
+#[derive(Copy, Clone, Debug)]
+enum Mic {
+    Left,
+    Right,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum Order {
     Drop(usize, usize, f32),
+    MoveMic(Mic, (usize, usize)),
+    WaveSim(wave_simulator::Order),
     Quit,
 }
 
-fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>)
-{
+fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
     use audio_sim::gui;
     use imgui::*;
 
     let mut drop_pos: [i32; 2] = [0, 0];
     let mut drop_f: f32 = 0.0;
+    let mut mic_l_pos: [i32; 2] = [0, 0];
+    let mut mic_r_pos: [i32; 2] = [0, 0];
+    let mut oscillate: bool = false;
+    let mut propagration_ratio: f32 = 0.2;
+    let mut dumping_ratio: f32 = 0.1;
+    let mut mode: i32 = 0;
 
-    gui::run("Audio Simulator".to_owned(), mem, |ui, _, _|{
-        ui_func(ui, tx.clone(), &mut drop_pos, &mut drop_f)
+    gui::run("Audio Simulator".to_owned(), mem, |ui, _, _| {
+        ui_func(
+            ui,
+            tx.clone(),
+            &mut drop_pos,
+            &mut drop_f,
+            &mut mic_l_pos,
+            &mut mic_r_pos,
+            &mut oscillate,
+            &mut propagration_ratio,
+            &mut dumping_ratio,
+            &mut mode,
+        )
     });
 
-    fn ui_func<'a>(ui: &Ui<'a>, tx: Sender<Order>, mut drop_pos: &mut [i32; 2], mut drop_f: &mut f32) -> bool
-    {
+    fn ui_func<'a>(
+        ui: &Ui<'a>,
+        tx: Sender<Order>,
+        mut drop_pos: &mut [i32; 2],
+        mut drop_f: &mut f32,
+        mut mic_l_pos: &mut [i32; 2],
+        mut mic_r_pos: &mut [i32; 2],
+        mut oscillate: &mut bool,
+        mut propagration_ratio: &mut f32,
+        mut dumping_ratio: &mut f32,
+        mut mode: &mut i32,
+    ) -> bool {
         ui.window(im_str!("nanamin!!"))
-            .size((300.0, 300.0), ImGuiCond::FirstUseEver)
+            .size((500.0, 300.0), ImGuiCond::FirstUseEver)
             .build(move || {
                 ui.text(im_str!("wave!"));
                 ui.separator();
+                /*
+                ui.slider_int2(im_str!("drop pos"), &mut drop_pos, 0, SIZE as i32)
+                    .build();
+                    */
 
-                ui.slider_int2(im_str!("drop x"), &mut drop_pos, 0, SIZE as i32).build();
-                ui.slider_float(im_str!("drop f"), &mut drop_f, 0.0, 100.0).build();
+                ui.slider_float(im_str!("drop f"), &mut drop_f, -10.0, 10.0)
+                    .build();
 
-                if ui.button(im_str!("drop!"), (80.0, 20.0))
+                *drop_f += ui.imgui().mouse_wheel() / 10.0;
+
+                /*
+                if ui.button(im_str!("drop!"), (80.0, 20.0)) {
+                    println!(
+                        "drop!\n(x, y, f) : ({}, {}, {})",
+                        drop_pos[0], drop_pos[1], drop_f
+                    );
+                    tx.send(Order::Drop(
+                        drop_pos[0] as u32 as usize,
+                        drop_pos[1] as u32 as usize,
+                        *drop_f,
+                    ))
+                    .unwrap();
+                }
+                */
+
+                if ui
+                    .slider_float(
+                        im_str!("propagration ratio"),
+                        &mut propagration_ratio,
+                        0.0,
+                        1.0,
+                    )
+                    .build()
                 {
-                    println!("drop!\n(x, y, f) : ({}, {}, {})", drop_pos[0], drop_pos[1], drop_f);
-                    tx.send(Order::Drop(drop_pos[0] as u32 as usize, drop_pos[1] as u32 as usize, *drop_f)).unwrap();
+                    /*
+                    tx.send(Order::WaveSim(wave_simulator::Order::Change(
+                        wave_simulator::Parameter::PropagationRatio(10, 10, *propagration_ratio),
+                    )))
+                    .unwrap();
+                    */
                 }
 
-                if ui.button(im_str!("quit!"), (80.0, 20.0))
+                if ui
+                    .slider_float(im_str!("dumping ratio"), &mut dumping_ratio, 0.0, 2.0)
+                    .build()
                 {
+                    /*
+                    tx.send(Order::WaveSim(wave_simulator::Order::Change(
+                        wave_simulator::Parameter::DumpingRatio(10, 10, *dumping_ratio),
+                    )))
+                    .unwrap();
+                    */
+                }
+                if ui.button(im_str!("fill spec!"), (80.0, 20.0)) {
+                    for x in 0..SIZE {
+                        for y in 0..SIZE {
+                            tx.send(Order::WaveSim(wave_simulator::Order::Change(
+                                wave_simulator::Parameter::DumpingRatio(x, y, *dumping_ratio),
+                            )))
+                            .unwrap();
+                            tx.send(Order::WaveSim(wave_simulator::Order::Change(
+                                wave_simulator::Parameter::PropagationRatio(
+                                    x,
+                                    y,
+                                    *propagration_ratio,
+                                ),
+                            )))
+                            .unwrap();
+                        }
+                    }
+                }
+
+                if ui.imgui().is_mouse_down(ImMouseButton::Left)
+                    && *mode == 1
+                    && !ui.is_window_focused()
+                {
+                    let mouse_pos = ui.imgui().mouse_pos();
+                    let frame_size = ui.frame_size().logical_size;
+                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let y =
+                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                    if x < SIZE && y < SIZE {
+                        tx.send(Order::WaveSim(wave_simulator::Order::Change(
+                            wave_simulator::Parameter::DumpingRatio(x, y, *dumping_ratio),
+                        )))
+                        .unwrap()
+                    }
+                }
+
+                if ui.imgui().is_mouse_down(ImMouseButton::Left)
+                    && *mode == 1
+                    && !ui.is_window_focused()
+                {
+                    let mouse_pos = ui.imgui().mouse_pos();
+                    let frame_size = ui.frame_size().logical_size;
+                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let y =
+                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                    if x < SIZE && y < SIZE {
+                        tx.send(Order::WaveSim(wave_simulator::Order::Change(
+                            wave_simulator::Parameter::PropagationRatio(x, y, *propagration_ratio),
+                        )))
+                        .unwrap();
+                    }
+                }
+
+                if ui
+                    .slider_int2(im_str!("mic l pos"), &mut mic_l_pos, 0, SIZE as i32)
+                    .build()
+                {
+                    tx.send(Order::MoveMic(
+                        Mic::Left,
+                        (mic_l_pos[0] as u32 as usize, mic_l_pos[1] as u32 as usize),
+                    ))
+                    .unwrap();
+                }
+
+                if ui.imgui().is_mouse_down(ImMouseButton::Left)
+                    && !ui.is_window_focused()
+                    && *mode == 0
+                {
+                    let mouse_pos = ui.imgui().mouse_pos();
+                    let frame_size = ui.frame_size().logical_size;
+                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let y =
+                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                    if x < SIZE && y < SIZE {
+                        mic_l_pos[0] = x as i32;
+                        mic_l_pos[1] = y as i32;
+                        tx.send(Order::MoveMic(
+                            Mic::Left,
+                            (mic_l_pos[0] as u32 as usize, mic_l_pos[1] as u32 as usize),
+                        ))
+                        .unwrap();
+                    }
+                }
+                if ui
+                    .slider_int2(im_str!("mic r pos"), &mut mic_r_pos, 0, SIZE as i32)
+                    .build()
+                {
+                    tx.send(Order::MoveMic(
+                        Mic::Right,
+                        (mic_r_pos[0] as u32 as usize, mic_r_pos[1] as u32 as usize),
+                    ))
+                    .unwrap();
+                }
+
+                if ui.imgui().is_mouse_down(ImMouseButton::Right)
+                    && !ui.is_window_focused()
+                    && *mode == 0
+                {
+                    let mouse_pos = ui.imgui().mouse_pos();
+                    let frame_size = ui.frame_size().logical_size;
+                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let y =
+                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                    if x < SIZE && y < SIZE {
+                        mic_r_pos[0] = x as i32;
+                        mic_r_pos[1] = y as i32;
+                        tx.send(Order::MoveMic(
+                            Mic::Right,
+                            (mic_r_pos[0] as u32 as usize, mic_r_pos[1] as u32 as usize),
+                        ))
+                        .unwrap();
+                    }
+                }
+
+                ui.radio_button(im_str!("normal mode!"), &mut mode, 0);
+                ui.radio_button(im_str!("spec mode!"), &mut mode, 1);
+
+                if ui.button(im_str!("quit!"), (80.0, 20.0)) {
                     println!("quit!");
                     tx.send(Order::Quit).unwrap();
+                }
+                if ui.imgui().is_mouse_down(ImMouseButton::Middle) {
+                    *oscillate = !oscillate.clone();
+                }
+
+                if *oscillate {
+                    let mouse_pos = ui.imgui().mouse_pos();
+                    let frame_size = ui.frame_size().logical_size;
+                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let y =
+                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                    if x < SIZE && y < SIZE {
+                        tx.send(Order::Drop(x, y, *drop_f)).unwrap();
+                    }
                 }
 
                 let mouse_pos = ui.imgui().mouse_pos();
@@ -119,11 +374,9 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>)
     }
 }
 
-
-fn get_writer() -> hound::WavWriter<std::io::BufWriter<std::fs::File>>
-{
+fn get_writer() -> hound::WavWriter<std::io::BufWriter<std::fs::File>> {
     let spec = hound::WavSpec {
-        channels: 1,
+        channels: 2,
         sample_rate: 44100,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,

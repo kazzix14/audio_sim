@@ -1,8 +1,8 @@
 use crate::SIZE;
 
-use std::time::*;
 use std::rc::Rc;
 use std::sync::*;
+use std::time::*;
 
 use glium::backend::Context;
 use glium::backend::Facade;
@@ -14,21 +14,18 @@ use imgui_winit_support::*;
 pub type Textures = imgui::Textures<Texture2d>;
 
 pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
-    where
-        F: FnMut(&Ui, &Rc<Context>, &mut Textures) -> bool,
+where
+    F: FnMut(&Ui, &Rc<Context>, &mut Textures) -> bool,
 {
-
     use glium::glutin;
     use glium::{Display, Surface};
     use imgui_glium_renderer::Renderer;
 
     let mut events_loop = glutin::EventsLoop::new();
 
-    let wb = glutin::WindowBuilder::new()
-        .with_title(title);
+    let wb = glutin::WindowBuilder::new().with_title(title);
 
-    let cb = glutin::ContextBuilder::new()
-        .with_vsync(true);
+    let cb = glutin::ContextBuilder::new().with_vsync(true);
 
     let display = Display::new(wb, cb, &events_loop).unwrap();
 
@@ -36,22 +33,18 @@ pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
 
     let mut imgui = ImGui::init();
 
-
-    imgui
-        .set_ini_filename(None);
+    imgui.set_ini_filename(None);
 
     let hidpi_factor = window.get_hidpi_factor().round();
 
     let font_size = (13.0 * hidpi_factor) as f32;
-    
-    imgui
-        .fonts()
-        .add_default_font_with_config(
-            ImFontConfig::new()
-                .oversample_h(1)
-                .pixel_snap_h(true)
-                .size_pixels(font_size),
-        );
+
+    imgui.fonts().add_default_font_with_config(
+        ImFontConfig::new()
+            .oversample_h(1)
+            .pixel_snap_h(true)
+            .size_pixels(font_size),
+    );
 
     let mut renderer = Renderer::init(&mut imgui, &display).unwrap();
 
@@ -67,17 +60,30 @@ pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
 
     implement_vertex!(Vertex, position);
 
-    let v1 = Vertex {position: [-1.0, -1.0]};
-    let v2 = Vertex {position: [1.0, 1.0]};
-    let v3 = Vertex {position: [-1.0, 1.0]};
-    let v4 = Vertex {position: [-1.0, -1.0]};
-    let v5 = Vertex {position: [1.0, 1.0]};
-    let v6 = Vertex {position: [1.0, -1.0]};
+    let v1 = Vertex {
+        position: [-1.0, -1.0],
+    };
+    let v2 = Vertex {
+        position: [1.0, 1.0],
+    };
+    let v3 = Vertex {
+        position: [-1.0, 1.0],
+    };
+    let v4 = Vertex {
+        position: [-1.0, -1.0],
+    };
+    let v5 = Vertex {
+        position: [1.0, 1.0],
+    };
+    let v6 = Vertex {
+        position: [1.0, -1.0],
+    };
     let shape = vec![v1, v2, v3, v4, v5, v6];
     let vertex_buffer = glium::VertexBuffer::new(&display, &shape).unwrap();
     let indices = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
-    
-    let vertex_shader_src = format!(r#"
+
+    let vertex_shader_src = format!(
+        r#"
         #version 430
 
         in vec2 position;
@@ -87,9 +93,11 @@ pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
             gl_Position = vec4(position, 0.0, 1.0);
             
         }}
-    "#);
+    "#
+    );
 
-    let fragment_shader_src = format!(r#"
+    let fragment_shader_src = format!(
+        r#"
         #version 430
 
         out vec4 color;
@@ -127,14 +135,22 @@ pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
                     break;
             }}
 
-            color = vec4(value/2.0, -value/2.0, value * ((value < 0) ? -2.0 : 2.0), 1.0);
+            color = vec4(value/20.0, value/5.0, value, 1.0);
         }}
-    "#, len=SIZE*SIZE, size=SIZE);
+    "#,
+        len = SIZE * SIZE,
+        size = SIZE
+    );
 
-    let program = glium::Program::from_source(&display, vertex_shader_src.as_str(), fragment_shader_src.as_str(), None).unwrap();
+    let program = glium::Program::from_source(
+        &display,
+        vertex_shader_src.as_str(),
+        fragment_shader_src.as_str(),
+        None,
+    )
+    .unwrap();
 
-    struct Data
-    {
+    struct Data {
         values: [[f32; 4]],
     }
 
@@ -142,14 +158,9 @@ pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
     implement_uniform_block!(Data, values);
 
     let mut buffer: glium::uniforms::UniformBuffer<Data> =
-        glium::uniforms::UniformBuffer::empty_unsized(&display, 4*SIZE*SIZE).unwrap();
+        glium::uniforms::UniformBuffer::empty_unsized(&display, 4 * SIZE * SIZE).unwrap();
 
-    
-
-
-    while !quit
-    {
-
+    while !quit {
         events_loop.poll_events(|event| {
             use glium::glutin::{Event, WindowEvent::CloseRequested};
 
@@ -160,8 +171,7 @@ pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
                 hidpi_factor,
             );
 
-
-            if let Event::WindowEvent {event, ..} = event {
+            if let Event::WindowEvent { event, .. } = event {
                 match event {
                     CloseRequested => quit = true,
                     _ => (),
@@ -176,11 +186,10 @@ pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
 
         imgui_winit_support::update_mouse_cursor(&imgui, &window);
 
-
         let frame_size = imgui_winit_support::get_frame_size(&window, hidpi_factor).unwrap();
 
         let ui = imgui.frame(frame_size, delta_s);
-        if !run_ui(&ui, display.get_context(), renderer.textures()){
+        if !run_ui(&ui, display.get_context(), renderer.textures()) {
             quit = true;
         }
 
@@ -188,18 +197,16 @@ pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
         let mut target = display.draw();
         target.clear_color(0.0, 1.0, 1.0, 1.0);
 
-        
         {
-            let vec : Vec<f32>;
+            let vec: Vec<f32>;
             {
                 let m = mem.lock().unwrap();
                 vec = m.clone();
             }
 
             let mut mapping = buffer.map();
-            for (i, val) in mapping.values.iter_mut().enumerate()
-            {
-                *val = [vec[i*4], vec[i*4+1], vec[i*4+2], vec[i*4+3]];
+            for (i, val) in mapping.values.iter_mut().enumerate() {
+                *val = [vec[i * 4], vec[i * 4 + 1], vec[i * 4 + 2], vec[i * 4 + 3]];
             }
         }
 
