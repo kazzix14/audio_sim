@@ -1,3 +1,4 @@
+use audio_sim::oscillator;
 use audio_sim::wave_simulator;
 use audio_sim::wave_simulator::*;
 use audio_sim::SIZE;
@@ -26,8 +27,8 @@ fn main() -> std::io::Result<()> {
     let mut writer = get_writer();
 
     let mut now = Instant::now();
-    let mut mic_l_pos = (0, 0);
-    let mut mic_r_pos = (0, 0);
+    let mut mic_l_pos = [0, 0];
+    let mut mic_r_pos = [0, 0];
     let tx_order_vec = wave_simulator.tx_order.clone();
     for (t, space) in wave_simulator.enumerate() {
         let mut order = None;
@@ -67,9 +68,11 @@ fn main() -> std::io::Result<()> {
                     Order::WaveSim(ws_order) => match ws_order {
                         wave_simulator::Order::Change(Parameter::PropagationRatio(x, y, value)) => {
                             s.space_spec[x + y * SIZE].0 = value;
+                            s.space[x + y * SIZE] = 0.0;
                         }
                         wave_simulator::Order::Change(Parameter::DumpingRatio(x, y, value)) => {
                             s.space_spec[x + y * SIZE].1 = value;
+                            s.space[x + y * SIZE] = 0.0;
                         }
                     },
                     _ => (),
@@ -80,12 +83,12 @@ fn main() -> std::io::Result<()> {
         let amplitude = std::i16::MAX as f32 / 10.0;
         writer
             .write_sample(
-                (sp.space[mic_l_pos.0 as usize + mic_l_pos.1 as usize * SIZE] * amplitude) as i16,
+                (sp.space[mic_l_pos[0] as usize + mic_l_pos[1] as usize * SIZE] * amplitude) as i16,
             )
             .unwrap();
         writer
             .write_sample(
-                (sp.space[mic_r_pos.0 as usize + mic_r_pos.1 as usize * SIZE] * amplitude) as i16,
+                (sp.space[mic_r_pos[0] as usize + mic_r_pos[1] as usize * SIZE] * amplitude) as i16,
             )
             .unwrap();
 
@@ -100,8 +103,8 @@ fn main() -> std::io::Result<()> {
             {
                 let mut m = mem_gui.lock().unwrap();
                 *m = mem_throw;
-                m[mic_l_pos.0 as usize + mic_l_pos.1 as usize * SIZE] = 100.0;
-                m[mic_r_pos.0 as usize + mic_r_pos.1 as usize * SIZE] = 100.0;
+                m[mic_l_pos[0] as usize + mic_l_pos[1] as usize * SIZE] = 100.0;
+                m[mic_r_pos[0] as usize + mic_r_pos[1] as usize * SIZE] = 100.0;
             }
             now = Instant::now();
         }
@@ -128,7 +131,7 @@ enum Mic {
 #[derive(Copy, Clone, Debug)]
 enum Order {
     Drop(usize, usize, f32),
-    MoveMic(Mic, (usize, usize)),
+    MoveMic(Mic, [usize; 2]),
     WaveSim(wave_simulator::Order),
     Quit,
 }
@@ -146,9 +149,10 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
     let mut dumping_ratio: f32 = 0.1;
     let mut mode: i32 = 0;
 
-    gui::run("Audio Simulator".to_owned(), mem, |ui, _, _| {
+    gui::run("Audio Simulator".to_owned(), mem, |mut run, mut ui| {
         ui_func(
-            ui,
+            &mut ui,
+            &mut run,
             tx.clone(),
             &mut drop_pos,
             &mut drop_f,
@@ -162,7 +166,8 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
     });
 
     fn ui_func<'a>(
-        ui: &Ui<'a>,
+        ui: &mut Ui<'a>,
+        run: &mut bool,
         tx: Sender<Order>,
         mut drop_pos: &mut [i32; 2],
         mut drop_f: &mut f32,
@@ -174,7 +179,7 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
         mut mode: &mut i32,
     ) -> bool {
         ui.window(im_str!("nanamin!!"))
-            .size((500.0, 300.0), ImGuiCond::FirstUseEver)
+            .size([500.0, 300.0], Condition::FirstUseEver)
             .build(move || {
                 ui.text(im_str!("wave!"));
                 ui.separator();
@@ -192,11 +197,11 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
                 if ui.button(im_str!("drop!"), (80.0, 20.0)) {
                     println!(
                         "drop!\n(x, y, f) : ({}, {}, {})",
-                        drop_pos[0], drop_pos[1], drop_f
+                        drop_pos.0], drop_pos.1], drop_f
                     );
                     tx.send(Order::Drop(
-                        drop_pos[0] as u32 as usize,
-                        drop_pos[1] as u32 as usize,
+                        drop_pos.0] as u32 as usize,
+                        drop_pos.1] as u32 as usize,
                         *drop_f,
                     ))
                     .unwrap();
@@ -231,7 +236,7 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
                     .unwrap();
                     */
                 }
-                if ui.button(im_str!("fill spec!"), (80.0, 20.0)) {
+                if ui.button(im_str!("fill spec!"), [80.0, 20.0]) {
                     for x in 0..SIZE {
                         for y in 0..SIZE {
                             tx.send(Order::WaveSim(wave_simulator::Order::Change(
@@ -250,15 +255,15 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
                     }
                 }
 
-                if ui.imgui().is_mouse_down(ImMouseButton::Left)
+                if ui.imgui().is_mouse_down(MouseButton::Left)
                     && *mode == 1
                     && !ui.is_window_focused()
                 {
                     let mouse_pos = ui.imgui().mouse_pos();
-                    let frame_size = ui.frame_size().logical_size;
-                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let frame_size = ui.io().display_size;
+                    let x = (mouse_pos.0 / frame_size[0] as f32 * SIZE as f32) as u32 as usize;
                     let y =
-                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                        ((1.0 - mouse_pos.1 / frame_size[1] as f32) * SIZE as f32) as u32 as usize;
                     if x < SIZE && y < SIZE {
                         tx.send(Order::WaveSim(wave_simulator::Order::Change(
                             wave_simulator::Parameter::DumpingRatio(x, y, *dumping_ratio),
@@ -267,15 +272,15 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
                     }
                 }
 
-                if ui.imgui().is_mouse_down(ImMouseButton::Left)
+                if ui.imgui().is_mouse_down(MouseButton::Left)
                     && *mode == 1
                     && !ui.is_window_focused()
                 {
                     let mouse_pos = ui.imgui().mouse_pos();
-                    let frame_size = ui.frame_size().logical_size;
-                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let frame_size = ui.io().display_size;
+                    let x = (mouse_pos.0 / frame_size[0] as f32 * SIZE as f32) as u32 as usize;
                     let y =
-                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                        ((1.0 - mouse_pos.1 / frame_size[1] as f32) * SIZE as f32) as u32 as usize;
                     if x < SIZE && y < SIZE {
                         tx.send(Order::WaveSim(wave_simulator::Order::Change(
                             wave_simulator::Parameter::PropagationRatio(x, y, *propagration_ratio),
@@ -290,26 +295,26 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
                 {
                     tx.send(Order::MoveMic(
                         Mic::Left,
-                        (mic_l_pos[0] as u32 as usize, mic_l_pos[1] as u32 as usize),
+                        [mic_l_pos[0] as u32 as usize, mic_l_pos[1] as u32 as usize],
                     ))
                     .unwrap();
                 }
 
-                if ui.imgui().is_mouse_down(ImMouseButton::Left)
+                if ui.imgui().is_mouse_down(MouseButton::Left)
                     && !ui.is_window_focused()
                     && *mode == 0
                 {
                     let mouse_pos = ui.imgui().mouse_pos();
-                    let frame_size = ui.frame_size().logical_size;
-                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let frame_size = ui.io().display_size;
+                    let x = (mouse_pos.0 / frame_size[0] as f32 * SIZE as f32) as u32 as usize;
                     let y =
-                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                        ((1.0 - mouse_pos.1 / frame_size[1] as f32) * SIZE as f32) as u32 as usize;
                     if x < SIZE && y < SIZE {
                         mic_l_pos[0] = x as i32;
                         mic_l_pos[1] = y as i32;
                         tx.send(Order::MoveMic(
                             Mic::Left,
-                            (mic_l_pos[0] as u32 as usize, mic_l_pos[1] as u32 as usize),
+                            [mic_l_pos[0] as u32 as usize, mic_l_pos[1] as u32 as usize],
                         ))
                         .unwrap();
                     }
@@ -320,48 +325,49 @@ fn gui(mem: Arc<Mutex<Vec<f32>>>, tx: Sender<Order>) {
                 {
                     tx.send(Order::MoveMic(
                         Mic::Right,
-                        (mic_r_pos[0] as u32 as usize, mic_r_pos[1] as u32 as usize),
+                        [mic_r_pos[0] as u32 as usize, mic_r_pos[1] as u32 as usize],
                     ))
                     .unwrap();
                 }
 
-                if ui.imgui().is_mouse_down(ImMouseButton::Right)
+                if ui.imgui().is_mouse_down(MouseButton::Right)
                     && !ui.is_window_focused()
                     && *mode == 0
                 {
                     let mouse_pos = ui.imgui().mouse_pos();
-                    let frame_size = ui.frame_size().logical_size;
-                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let frame_size = ui.io().display_size;
+                    let x = (mouse_pos.0 / frame_size[0] as f32 * SIZE as f32) as u32 as usize;
                     let y =
-                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                        ((1.0 - mouse_pos.1 / frame_size[1] as f32) * SIZE as f32) as u32 as usize;
                     if x < SIZE && y < SIZE {
                         mic_r_pos[0] = x as i32;
                         mic_r_pos[1] = y as i32;
                         tx.send(Order::MoveMic(
                             Mic::Right,
-                            (mic_r_pos[0] as u32 as usize, mic_r_pos[1] as u32 as usize),
+                            [mic_r_pos[0] as u32 as usize, mic_r_pos[1] as u32 as usize],
                         ))
                         .unwrap();
                     }
                 }
 
-                ui.radio_button(im_str!("normal mode!"), &mut mode, 0);
-                ui.radio_button(im_str!("spec mode!"), &mut mode, 1);
+                ui.radio_button(im_str!("normal mode!"), mode, 0);
+                ui.radio_button(im_str!("spec mode!"), mode, 1);
 
-                if ui.button(im_str!("quit!"), (80.0, 20.0)) {
+                if ui.button(im_str!("quit!"), [80.0, 20.0]) {
                     println!("quit!");
+                    *run = false;
                     tx.send(Order::Quit).unwrap();
                 }
-                if ui.imgui().is_mouse_down(ImMouseButton::Middle) {
+                if ui.imgui().is_mouse_clicked(MouseButton::Middle) {
                     *oscillate = !oscillate.clone();
                 }
 
                 if *oscillate {
                     let mouse_pos = ui.imgui().mouse_pos();
-                    let frame_size = ui.frame_size().logical_size;
-                    let x = (mouse_pos.0 / frame_size.0 as f32 * SIZE as f32) as u32 as usize;
+                    let frame_size = ui.io().display_size;
+                    let x = (mouse_pos.0 / frame_size[0] as f32 * SIZE as f32) as u32 as usize;
                     let y =
-                        ((1.0 - mouse_pos.1 / frame_size.1 as f32) * SIZE as f32) as u32 as usize;
+                        ((1.0 - mouse_pos.1 / frame_size[1] as f32) * SIZE as f32) as u32 as usize;
                     if x < SIZE && y < SIZE {
                         tx.send(Order::Drop(x, y, *drop_f)).unwrap();
                     }

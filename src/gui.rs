@@ -6,7 +6,10 @@ use std::time::*;
 
 use glium::backend::Context;
 use glium::backend::Facade;
+use glium::index::PrimitiveType;
+use glium::texture::*;
 use glium::Texture2d;
+
 use imgui::*;
 use imgui_glium_renderer::*;
 use imgui_winit_support::*;
@@ -15,7 +18,7 @@ pub type Textures = imgui::Textures<Texture2d>;
 
 pub fn run<F>(title: String, mem: Arc<Mutex<Vec<f32>>>, mut run_ui: F)
 where
-    F: FnMut(&Ui, &Rc<Context>, &mut Textures) -> bool,
+    F: FnMut(&mut bool, &mut Ui) -> bool,
 {
     use glium::glutin;
     use glium::{Display, Surface};
@@ -29,29 +32,48 @@ where
 
     let display = Display::new(wb, cb, &events_loop).unwrap();
 
-    let window = display.gl_window();
+    let mic_image = image::load(
+        std::io::Cursor::new(&include_bytes!("../resources/images/mic.png")[..]),
+        image::PNG,
+    )
+    .unwrap()
+    .to_rgba();
 
-    let mut imgui = ImGui::init();
+    let mic_image_dimensions = mic_image.dimensions();
 
+    let mic_image = glium::texture::RawImage2d::from_raw_rgba_reversed(
+        &mic_image.into_raw(),
+        mic_image_dimensions,
+    );
+
+    //let mic_opengl_texture = glium::texture::
+
+    let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
 
-    let hidpi_factor = window.get_hidpi_factor().round();
+    let gl_window = display.gl_window();
+    let window = gl_window.window();
+    let mut platform = WinitPlatform::init(&mut imgui);
+    platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Rounded);
 
+    let hidpi_factor = platform.hidpi_factor();
     let font_size = (13.0 * hidpi_factor) as f32;
 
-    imgui.fonts().add_default_font_with_config(
-        ImFontConfig::new()
-            .oversample_h(1)
-            .pixel_snap_h(true)
-            .size_pixels(font_size),
-    );
+    imgui.fonts().add_font(&[FontSource::DefaultFontData {
+        config: Some(FontConfig {
+            size_pixels: font_size,
+            ..FontConfig::default()
+        }),
+    }]);
+
+    imgui.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
 
     let mut renderer = Renderer::init(&mut imgui, &display).unwrap();
 
-    imgui_winit_support::configure_keys(&mut imgui);
+    //imgui_winit_support::configure_keys(&mut imgui);
 
     let mut last_frame = Instant::now();
-    let mut quit = false;
+    let mut run = true;
 
     #[derive(Copy, Clone)]
     struct Vertex {
@@ -160,43 +182,39 @@ where
     let mut buffer: glium::uniforms::UniformBuffer<Data> =
         glium::uniforms::UniformBuffer::empty_unsized(&display, 4 * SIZE * SIZE).unwrap();
 
-    while !quit {
+    while run {
         events_loop.poll_events(|event| {
             use glium::glutin::{Event, WindowEvent::CloseRequested};
 
-            imgui_winit_support::handle_event(
-                &mut imgui,
-                &event,
-                window.get_hidpi_factor(),
-                hidpi_factor,
-            );
+            platform.handle_event(imgui.io_mut(), &window, &event);
 
             if let Event::WindowEvent { event, .. } = event {
                 match event {
-                    CloseRequested => quit = true,
+                    CloseRequested => run = false,
                     _ => (),
                 }
             }
         });
 
+        let io = imgui.io_mut();
+
         let now = Instant::now();
-        let delta = now - last_frame;
-        let delta_s = delta.as_secs() as f32 + delta.subsec_nanos() as f32 / 1_000_000_000.0;
-        last_frame = now;
 
-        imgui_winit_support::update_mouse_cursor(&imgui, &window);
+        platform.prepare_frame(io, &window).unwrap();
+        last_frame = io.update_delta_time(last_frame);
+        let mut ui = imgui.frame();
 
-        let frame_size = imgui_winit_support::get_frame_size(&window, hidpi_factor).unwrap();
+        run_ui(&mut run, &mut ui);
+        //imgui_winit_support::update_mouse_cursor(&imgui, &window);
 
-        let ui = imgui.frame(frame_size, delta_s);
-        if !run_ui(&ui, display.get_context(), renderer.textures()) {
-            quit = true;
-        }
+        //if !run_ui(&ui, display.get_context(), renderer.textures()) {
+        //quit = true;
+        //}
 
         let logical_size = window.get_inner_size().unwrap();
+
         let mut target = display.draw();
         target.clear_color(0.0, 1.0, 1.0, 1.0);
-
         {
             let vec: Vec<f32>;
             {
@@ -212,7 +230,9 @@ where
 
         target.draw(&vertex_buffer, &indices, &program, &uniform!{MyBlock: &*buffer, width: logical_size.width as f32, height: logical_size.height as f32}, &Default::default()).unwrap();
 
-        renderer.render(&mut target, ui).unwrap();
+        platform.prepare_render(&ui, &window);
+        let draw_data = ui.render();
+        renderer.render(&mut target, draw_data).unwrap();
         target.finish().unwrap();
     }
 }

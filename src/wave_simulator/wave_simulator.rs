@@ -97,7 +97,7 @@ impl WaveSimulator {
                     {
                         let current_space = space_current.lock().unwrap();
                         my_current = current_space.space[y_start..y_end].to_vec().clone();
-                        my_space_spec = current_space.space_spec.clone();
+                        my_space_spec = current_space.space_spec[y_start..y_end].to_vec().clone();
                     }
 
                     if i == 0 {
