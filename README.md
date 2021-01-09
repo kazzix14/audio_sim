@@ -12,7 +12,7 @@ Run
     cargo run --release
 
 Then a window appears. You can interact with sound waves on it.  
-Because this software not really optimized, you can not hear sound on the realtime :crying_cat_face: :crying_cat_face:.  
+Because this software not really optimized, you can not hear the sound in realtime :crying_cat_face: :crying_cat_face:.  
 When you press quit! button. The software will terminates. and `mic.wav` witch is a sound of your waves appears.  
 
 Table bellow describes parameters and role of buttons.
